@@ -1,6 +1,6 @@
 {
   "name": "hush",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Push-to-talk bridge: mute Discord while you dictate with Wispr Flow",
   "author": "Matthys Ducrocq",
   "license": "MIT",
@@ -26,6 +26,7 @@
   "dependencies": {
     "discord-rpc": "^4.0.1",
     "electron-store": "^8.2.0",
+    "koffi": "^3.1.0",
     "uiohook-napi": "^1.5.4"
   },
   "optionalDependencies": {
@@ -46,7 +47,8 @@
     ],
     "asarUnpack": [
       "**/*.node",
-      "node_modules/uiohook-napi/**"
+      "node_modules/uiohook-napi/**",
+      "node_modules/koffi/**"
     ],
     "mac": {
       "category": "public.app-category.productivity",

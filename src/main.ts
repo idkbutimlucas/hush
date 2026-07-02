@@ -2,9 +2,11 @@ import { app, Tray, Menu, BrowserWindow, nativeImage, ipcMain, shell, systemPref
 import * as path from 'path';
 import { uIOhook } from 'uiohook-napi';
 import { BRAND } from './brand';
-import { Combo, HushConfig, Mod } from './types';
+import { Combo, HushConfig, InputEngine, Mod } from './types';
 import { loadConfig, saveConfig } from './store';
-import { comboLabel, normalizeMods } from './combo';
+import { comboLabel, normalizeMods, isFnCombo } from './combo';
+import { FnInputEngine } from './fn-input';
+import { fnAvailable, isFnDown } from './fn-key';
 import { dbg, LOG_FILE } from './debug';
 import { Orchestrator } from './orchestrator';
 import { DiscordRpcMuter } from './discord-mute';
@@ -50,7 +52,7 @@ let win: BrowserWindow | null = null;
 // config reloads; reconnected when credentials change.
 const discord = new DiscordRpcMuter();
 let orchestrator: Orchestrator | null = null;
-let input: UiohookInputEngine | null = null;
+let input: InputEngine | null = null;
 let cfg: HushConfig = loadConfig();
 let engineReady = false;
 let active = false;
@@ -109,7 +111,8 @@ function applyConfig(next: HushConfig) {
     active = isActive;
     pushStatus();
   });
-  input = new UiohookInputEngine(cfg.shortcut);
+  // Fn is invisible to uiohook — it's polled via CoreGraphics instead.
+  input = isFnCombo(cfg.shortcut) ? new FnInputEngine() : new UiohookInputEngine(cfg.shortcut);
   input.onPress(() => { if (capturing) return; void orchestrator?.onPress(); });
   input.onRelease(() => { if (capturing) return; void orchestrator?.onRelease(); });
 
@@ -214,11 +217,13 @@ function captureCombo(): Promise<CaptureResult> {
     let settled = false;
     const pressed = new Set<Mod>();
     let peak: Mod[] = [];
+    let fnTimer: ReturnType<typeof setInterval> | null = null;
 
     const finish = (res: CaptureResult) => {
       if (settled) return;
       settled = true;
       capturing = false;
+      if (fnTimer) clearInterval(fnTimer);
       uIOhook.off('keydown', onDown);
       uIOhook.off('keyup', onUp);
       resolve(res);
@@ -245,6 +250,12 @@ function captureCombo(): Promise<CaptureResult> {
 
     uIOhook.on('keydown', onDown);
     uIOhook.on('keyup', onUp);
+    // Fn emits no key event — poll for it so "press your shortcut" catches it too.
+    if (fnAvailable()) {
+      fnTimer = setInterval(() => {
+        if (isFnDown()) finish({ combo: { mods: [], key: 'Fn' } });
+      }, 16);
+    }
     setTimeout(() => finish({ combo: null, reason: 'timeout' }), 8000);
   });
 }

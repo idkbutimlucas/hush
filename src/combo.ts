@@ -24,7 +24,13 @@ export function combosDistinct(combos: Combo[]): boolean {
 
 const MOD_SYMBOL: Record<Mod, string> = { ctrl: '⌃', alt: '⌥', cmd: '⌘', shift: '⇧' };
 
+// The macOS Fn / Globe key, stored as key === 'Fn' with no modifiers.
+export function isFnCombo(combo: Combo): boolean {
+  return combo.mods.length === 0 && combo.key.toUpperCase() === 'FN';
+}
+
 export function comboLabel(combo: Combo): string {
+  if (isFnCombo(combo)) return '🌐 Fn';
   const mods = normalizeMods(combo.mods).map((m) => MOD_SYMBOL[m]).join('');
   if (!combo.key) return mods || '—';
   return mods + combo.key.toUpperCase();
