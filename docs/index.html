@@ -78,6 +78,10 @@
     font-size:15px;transition:background .15s ease,transform .15s ease,box-shadow .15s ease;
     box-shadow:0 8px 24px rgba(111,95,230,.28)}
   .btn:hover{background:#9c8fff;transform:translateY(-1px);box-shadow:0 12px 30px rgba(111,95,230,.4)}
+  .btn.alt{background:var(--surface2);color:var(--text);border:1px solid var(--border);box-shadow:none}
+  .btn.alt:hover{background:#242432;border-color:var(--primary-dim);box-shadow:none}
+  .btn .os-ico{font-size:15px;line-height:1}
+  .dl-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:14px}
   .free{margin-top:20px;font-size:13px;color:var(--muted)}
 
   /* sections */
@@ -148,6 +152,8 @@
     width:24px;height:24px;border-radius:7px;display:grid;place-items:center;font-size:12.5px;font-weight:700;
     color:var(--primary);background:rgba(139,124,255,.12);border:1px solid rgba(139,124,255,.3)}
   .plat ol li strong{color:var(--text);font-weight:600}
+  .plat ol li a{color:var(--primary);text-decoration:none}
+  .plat ol li a:hover{text-decoration:underline}
   .plat ol li code{background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:1px 6px;
     font-family:'SF Mono',ui-monospace,monospace;font-size:12px;color:var(--primary)}
   .plat .foot{margin-top:auto;padding-top:16px;font-size:13px;color:var(--muted)}
@@ -202,9 +208,12 @@
         </div>
         <button class="copy" id="copyBtn">Copy</button>
       </div>
-      <a class="btn" href="https://github.com/MatthysDev/hush/releases" target="_blank" rel="noopener">Download ↓</a>
     </div>
-    <div class="free">MIT licensed · no account · no cloud · no telemetry</div>
+    <div class="dl-row">
+      <a class="btn alt" href="https://github.com/MatthysDev/hush/releases/latest" target="_blank" rel="noopener"><span class="os-ico">🍎</span> macOS&nbsp;(.dmg)</a>
+      <a class="btn alt" href="https://github.com/MatthysDev/hush/releases/latest" target="_blank" rel="noopener"><span class="os-ico">🪟</span> Windows&nbsp;(.exe)</a>
+    </div>
+    <div class="free">macOS 12+ (Apple Silicon) · Windows 10/11 · MIT · no account · no telemetry</div>
   </header>
 </div>
 
@@ -282,7 +291,7 @@
       <div class="plat">
         <div class="plat-head"><span class="os">🪟 Windows</span><span class="badge">.exe installer</span></div>
         <ol>
-          <li><strong>Download</strong> — grab <code>Hush-Setup.exe</code> from Releases and run it.</li>
+          <li><strong>Download</strong> — grab <code>Hush-0.1.0-Setup.exe</code> from the <a href="https://github.com/MatthysDev/hush/releases/latest" target="_blank" rel="noopener">latest release</a> and run it.</li>
           <li><strong>Open it</strong> — it isn't signed, so SmartScreen may warn: <strong>More info → Run anyway</strong>.</li>
           <li><strong>No extra permission</strong> — Windows lets Hush watch your shortcut out of the box.</li>
           <li><strong>Connect Discord</strong> — same free Discord app: <strong>Client ID</strong> + <strong>Secret</strong> + the <code>http://localhost</code> redirect.</li>
