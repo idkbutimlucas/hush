@@ -129,17 +129,32 @@ function applyConfig(next: HushConfig) {
   pushStatus();
 }
 
+let rpcRetryTimer: ReturnType<typeof setTimeout> | null = null;
+
 // (Re)connect the Discord RPC from the current config. Best-effort: failures are
-// captured in the muter's state and surfaced via status, never thrown.
+// captured in the muter's state and surfaced via status, never thrown. Reuses a
+// cached OAuth token (no authorize popup) and, if Discord isn't running yet,
+// retries quietly so it connects on its own once Discord opens.
 async function connectDiscord(): Promise<void> {
-  const { clientId, clientSecret } = cfg.discordRpc;
+  if (rpcRetryTimer) { clearTimeout(rpcRetryTimer); rpcRetryTimer = null; }
+  const { clientId, clientSecret, accessToken } = cfg.discordRpc;
   if (!clientId || !clientSecret) {
     await discord.disconnect();
     pushStatus();
     return;
   }
   pushStatus(); // reflect 'connecting'
-  await discord.connect(clientId, clientSecret);
+  const ok = await discord.connect(clientId, clientSecret, accessToken);
+
+  // Persist a freshly-obtained token so the next launch reconnects silently.
+  const tok = discord.getAccessToken();
+  if (ok && tok && tok !== cfg.discordRpc.accessToken) {
+    cfg = { ...cfg, discordRpc: { ...cfg.discordRpc, accessToken: tok } };
+    try { saveConfig(cfg); } catch { /* noop */ }
+  }
+
+  // Discord probably wasn't up yet — retry quietly until it is.
+  if (!ok) rpcRetryTimer = setTimeout(() => { void connectDiscord(); }, 15000);
   pushStatus();
 }
 

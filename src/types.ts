@@ -20,6 +20,9 @@ export interface DiscordMuter {
 export interface DiscordRpc {
   clientId: string;
   clientSecret: string;
+  // Cached OAuth access token. Once you've authorized once, Hush reuses this on
+  // later launches so it never pops the Discord "Authorize" prompt again.
+  accessToken?: string;
 }
 
 export interface HushConfig {
