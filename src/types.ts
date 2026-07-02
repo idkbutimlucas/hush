@@ -25,6 +25,25 @@ export interface DiscordRpc {
   accessToken?: string;
 }
 
+// Where Discord lives relative to this machine.
+//  - 'local'      : Discord runs here — mute it directly over RPC (default).
+//  - 'controller' : dictation happens here; mute a Discord on another machine.
+//  - 'host'       : Discord runs here; accept mute commands from a controller.
+export type Role = 'local' | 'host' | 'controller';
+
+// Controller side: how to reach the host running Discord.
+export interface RemoteConfig {
+  host: string;      // LAN IP or hostname of the host machine
+  port: number;      // host's listening port
+  pairingCode: string;
+}
+
+// Host side: how this machine listens for a controller.
+export interface HostListenConfig {
+  port: number;
+  pairingCode: string;
+}
+
 export interface HushConfig {
   // The push-to-talk shortcut you already use in Wispr Flow. Hush watches for it
   // and mutes Discord while it is held — it never synthesizes the shortcut, you
@@ -37,4 +56,8 @@ export interface HushConfig {
   // Optional delay before unmuting Discord on release (tail padding so the last
   // word of dictation doesn't leak back into the call).
   unmuteDelayMs: number;
+  // Cross-machine muting. 'local' keeps the original single-machine behavior.
+  role: Role;
+  remote: RemoteConfig;
+  hostListen: HostListenConfig;
 }

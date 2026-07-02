@@ -17,6 +17,11 @@ function migrate(raw: Record<string, unknown>): HushConfig {
     discordRpc: (raw.discordRpc as HushConfig['discordRpc']) ?? DEFAULT_CONFIG.discordRpc,
     mode: (raw.mode as HushConfig['mode']) ?? DEFAULT_CONFIG.mode,
     unmuteDelayMs: (raw.unmuteDelayMs as number) ?? DEFAULT_CONFIG.unmuteDelayMs,
+    // New in the cross-machine build. Old configs predate these → default to
+    // 'local', preserving the original single-machine behavior exactly.
+    role: (raw.role as HushConfig['role']) ?? DEFAULT_CONFIG.role,
+    remote: (raw.remote as HushConfig['remote']) ?? DEFAULT_CONFIG.remote,
+    hostListen: (raw.hostListen as HushConfig['hostListen']) ?? DEFAULT_CONFIG.hostListen,
   };
 }
 
