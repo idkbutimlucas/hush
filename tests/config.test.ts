@@ -32,4 +32,18 @@ describe('validateConfig', () => {
       shortcut: { mods: [], key: '' },
     })).toThrow(/shortcut must have/);
   });
+  it('accepts a discordRpc with refreshToken + tokenExpiresAt', () => {
+    expect(() => validateConfig({
+      ...DEFAULT_CONFIG,
+      discordRpc: {
+        clientId: 'cid',
+        clientSecret: 'sec',
+        refreshToken: 'refresh-abc',
+        tokenExpiresAt: 1234567890,
+      },
+    })).not.toThrow();
+  });
+  it('leaves discordRpc defaults unchanged (no refresh-token fields by default)', () => {
+    expect(DEFAULT_CONFIG.discordRpc).toEqual({ clientId: '', clientSecret: '' });
+  });
 });

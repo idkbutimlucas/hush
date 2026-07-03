@@ -23,6 +23,11 @@ export interface DiscordRpc {
   // Cached OAuth access token. Once you've authorized once, Hush reuses this on
   // later launches so it never pops the Discord "Authorize" prompt again.
   accessToken?: string;
+  // OAuth refresh token — renews the access token silently (no re-authorize
+  // popup) until the user revokes Hush in Discord → Authorized Apps.
+  refreshToken?: string;
+  // Epoch ms when the cached access token expires.
+  tokenExpiresAt?: number;
 }
 
 export interface HushConfig {
