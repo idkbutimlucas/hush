@@ -81,6 +81,10 @@ export class DiscordRpcMuter implements DiscordMuter {
   private tokens: TokenSet | null = null;
   private closing = false;
   private onDrop: (() => void) | null = null;
+  // Bumped at the start of every connect() attempt. Lets a superseded attempt
+  // (overlapping connect() calls, or a socket drop mid-handshake) recognize
+  // it's stale and bail out without clobbering a newer attempt's state.
+  private generation = 0;
 
   constructor(deps: Partial<Deps> = {}) {
     this.deps = {
@@ -132,8 +136,13 @@ export class DiscordRpcMuter implements DiscordMuter {
   }
 
   private handleDrop(): void {
+    // Only a genuine drop of a *live* session counts. A socket close mid
+    // handshake (still 'connecting') is not a drop of anything — the
+    // in-flight connect() attempt already handles its own failure.
+    if (this.state !== 'connected') return;
     if (this.closing) return;
     this.state = 'disconnected';
+    this.client = null;
     dbg('rpc: disconnected (drop)');
     this.onDrop?.();
   }
@@ -152,6 +161,10 @@ export class DiscordRpcMuter implements DiscordMuter {
       this.lastError = 'client_id / client_secret manquants';
       return false;
     }
+    // Claim this attempt's generation. Any earlier in-flight connect() (or a
+    // watchdog bound to an earlier client) that resolves/fires after this
+    // point will see a stale gen and no-op instead of clobbering our state.
+    const gen = ++this.generation;
     this.state = 'connecting';
     this.lastError = null;
     await this.disconnect();
@@ -160,11 +173,17 @@ export class DiscordRpcMuter implements DiscordMuter {
     try {
       const client = this.deps.createClient();
       this.client = client;
-      client.on('disconnected', () => this.handleDrop());
+      client.on('disconnected', () => {
+        if (gen === this.generation) this.handleDrop();
+      });
 
       await withTimeout(client.connect(clientId), CONNECT_TIMEOUT_MS, 'rpc connect');
+      if (gen !== this.generation) {
+        try { client.destroy(); } catch { /* noop */ }
+        return false;
+      }
 
-      let ts: TokenSet;
+      let ts: TokenSet | null = null;
       if (tokens?.accessToken && !this.deps.oauth.isExpired(tokens.tokenExpiresAt, this.deps.now())) {
         // 1) Cached token still valid — no network call needed.
         ts = {
@@ -173,7 +192,6 @@ export class DiscordRpcMuter implements DiscordMuter {
           expiresAt: tokens.tokenExpiresAt ?? 0,
         };
       } else {
-        ts = null as unknown as TokenSet;
         if (tokens?.refreshToken) {
           // 2) Silent renewal via the refresh token.
           try {
@@ -201,18 +219,36 @@ export class DiscordRpcMuter implements DiscordMuter {
           );
         }
       }
+      if (gen !== this.generation) {
+        try { client.destroy(); } catch { /* noop */ }
+        return false;
+      }
+      if (!ts) throw new Error('token acquisition failed');
+
+      // Store the (possibly rotated) token immediately, BEFORE authenticate().
+      // If Discord already rotated the refresh token server-side and
+      // authenticate() then fails (e.g. the socket drops right then), the new
+      // token is still captured here so the caller can persist it — instead
+      // of silently losing it and retrying with a now-dead refresh token.
+      if (gen === this.generation) this.tokens = ts;
 
       await withTimeout(client.authenticate(ts.accessToken), TOKEN_LOGIN_TIMEOUT_MS, 'rpc authenticate');
+      if (gen !== this.generation) {
+        try { client.destroy(); } catch { /* noop */ }
+        return false;
+      }
 
-      this.tokens = ts;
       this.state = 'connected';
       dbg('rpc: connected');
       return true;
     } catch (err) {
-      this.client = null;
-      this.state = 'disconnected';
-      this.lastError = err instanceof Error ? err.message : String(err);
-      dbg('rpc: connect failed', this.lastError);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (gen === this.generation) {
+        this.client = null;
+        this.state = 'disconnected';
+        this.lastError = msg;
+      }
+      dbg('rpc: connect failed', msg);
       return false;
     }
   }

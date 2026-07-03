@@ -75,6 +75,18 @@ class FakeRpcClient {
   }
 }
 
+// Small helper for tests that need to control exactly when an async step
+// resolves (e.g. to simulate an in-flight handshake or a hung token call).
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function makeFakeOauth(overrides: Partial<{
   isExpired: (expiresAt: number | undefined, nowMs: number) => boolean;
   refreshTokens: (...args: any[]) => Promise<any>;
@@ -247,5 +259,153 @@ describe('DiscordRpcMuter drop watchdog', () => {
     client.fireDisconnected();
 
     expect(onDrop).not.toHaveBeenCalled();
+  });
+
+  it('a socket close mid-handshake does not fire onDrop (session never reached connected)', async () => {
+    let capturedClient: FakeRpcClient | null = null;
+    const connectGate = deferred<unknown>();
+    const oauth = makeFakeOauth({ isExpired: vi.fn(() => false) });
+    const m = new DiscordRpcMuter({
+      createClient: () => {
+        capturedClient = new FakeRpcClient();
+        capturedClient.connect = () => connectGate.promise;
+        return capturedClient as any;
+      },
+      oauth: oauth as any,
+      fetchImpl: (async () => {
+        throw new Error('unused fetch');
+      }) as any,
+      now: () => 1000,
+    });
+
+    const onDrop = vi.fn();
+    m.setOnDrop(onDrop);
+
+    const connectPromise = m.connect('cid', 'secret', { accessToken: 'tok', tokenExpiresAt: 999999 });
+    // Give connect() enough microtask ticks to create the client, register the
+    // 'disconnected' handler, and start waiting on client.connect() (which we
+    // control via connectGate) — i.e. we're mid-handshake, never 'connected'.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(m.getState()).toBe('connecting');
+
+    capturedClient!.fireDisconnected();
+
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(m.getState()).toBe('connecting');
+
+    // Let the handshake finish so the promise settles cleanly.
+    connectGate.resolve(undefined);
+    const ok = await connectPromise;
+    expect(ok).toBe(true);
+    expect(m.getState()).toBe('connected');
+  });
+
+  it('a stale connect() does not clobber a newer, successful connect()', async () => {
+    const clients: FakeRpcClient[] = [];
+    const refreshGate = deferred<{ accessToken: string; refreshToken: string; expiresAt: number }>();
+    const call1Reached = deferred<void>();
+    let refreshCallCount = 0;
+    const oauth = makeFakeOauth({
+      isExpired: vi.fn(() => true),
+      refreshTokens: vi.fn(async () => {
+        refreshCallCount += 1;
+        if (refreshCallCount === 1) {
+          call1Reached.resolve();
+          return refreshGate.promise; // call #1's token step hangs here.
+        }
+        return { accessToken: 'call2-token', refreshToken: 'call2-refresh', expiresAt: 42 };
+      }),
+    });
+    const m = new DiscordRpcMuter({
+      createClient: () => {
+        const c = new FakeRpcClient();
+        clients.push(c);
+        return c as any;
+      },
+      oauth: oauth as any,
+      fetchImpl: (async () => {
+        throw new Error('unused fetch');
+      }) as any,
+      now: () => 1000,
+    });
+
+    const p1 = m.connect('cid', 'secret', { accessToken: 'old', tokenExpiresAt: 1, refreshToken: 'r' });
+    await call1Reached.promise; // call #1 is now hung inside refreshTokens.
+
+    const ok2 = await m.connect('cid', 'secret', { accessToken: 'old2', tokenExpiresAt: 1, refreshToken: 'r2' });
+    expect(ok2).toBe(true);
+    expect(m.isConnected()).toBe(true);
+    expect(m.getTokens()).toEqual({ accessToken: 'call2-token', refreshToken: 'call2-refresh', tokenExpiresAt: 42 });
+
+    // Now let the stale call #1 finally settle.
+    refreshGate.resolve({ accessToken: 'stale', refreshToken: 'stale-r', expiresAt: 1 });
+    const ok1 = await p1;
+
+    expect(ok1).toBe(false);
+    // Call #1 must NOT have clobbered call #2's live state.
+    expect(m.isConnected()).toBe(true);
+    expect(m.getTokens()).toEqual({ accessToken: 'call2-token', refreshToken: 'call2-refresh', tokenExpiresAt: 42 });
+  });
+
+  it('keeps a rotated token even when authenticate() fails right after refresh', async () => {
+    let capturedClient: FakeRpcClient | null = null;
+    const oauth = makeFakeOauth({
+      isExpired: vi.fn(() => true),
+      refreshTokens: vi.fn(async () => ({ accessToken: 'new', refreshToken: 'r2', expiresAt: 123 })),
+    });
+    const m = new DiscordRpcMuter({
+      createClient: () => {
+        capturedClient = new FakeRpcClient();
+        capturedClient.authenticate = async () => {
+          throw new Error('discord dropped mid-authenticate');
+        };
+        return capturedClient as any;
+      },
+      oauth: oauth as any,
+      fetchImpl: (async () => {
+        throw new Error('unused fetch');
+      }) as any,
+      now: () => 1000,
+    });
+
+    const ok = await m.connect('cid', 'secret', { accessToken: 'old', tokenExpiresAt: 1, refreshToken: 'r' });
+
+    expect(ok).toBe(false);
+    expect(m.isConnected()).toBe(false);
+    // The rotated token must survive so the caller can persist it — retrying
+    // with the old (now dead, server-rotated) refresh token would otherwise
+    // fall through to the AUTHORIZE popup.
+    expect(m.getTokens()).toEqual({ accessToken: 'new', refreshToken: 'r2', tokenExpiresAt: 123 });
+  });
+
+  it('re-arms the drop watchdog after a disconnect + reconnect', async () => {
+    const clients: FakeRpcClient[] = [];
+    const oauth = makeFakeOauth({ isExpired: vi.fn(() => false) });
+    const m = new DiscordRpcMuter({
+      createClient: () => {
+        const c = new FakeRpcClient();
+        clients.push(c);
+        return c as any;
+      },
+      oauth: oauth as any,
+      fetchImpl: (async () => {
+        throw new Error('unused fetch');
+      }) as any,
+      now: () => 1000,
+    });
+
+    const onDrop = vi.fn();
+    m.setOnDrop(onDrop);
+
+    expect(await m.connect('cid', 'secret', { accessToken: 'tok', tokenExpiresAt: 999999 })).toBe(true);
+    await m.disconnect();
+    expect(await m.connect('cid', 'secret', { accessToken: 'tok2', tokenExpiresAt: 999999 })).toBe(true);
+
+    const newClient = clients[clients.length - 1];
+    newClient.fireDisconnected();
+
+    expect(onDrop).toHaveBeenCalledTimes(1);
+    expect(m.getState()).toBe('disconnected');
   });
 });
