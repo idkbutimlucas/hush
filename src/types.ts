@@ -19,6 +19,11 @@ export interface InputEngine {
 // this narrow contract; the concrete RPC client lives in discord-mute.ts.
 export interface DiscordMuter {
   setMute(on: boolean): Promise<void>;
+  // The user's current Discord self-mute state, or null if unknown (not
+  // connected / query failed). Hush reads this before muting so that releasing
+  // push-to-talk restores the prior state instead of unmuting someone who was
+  // already muted. Optional so lightweight fakes needn't implement it.
+  getMute?(): Promise<boolean | null>;
 }
 
 // Credentials for the local Discord RPC connection (from the Discord dev portal).

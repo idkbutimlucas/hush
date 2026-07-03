@@ -2,10 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { Orchestrator } from '../src/orchestrator';
 import { DiscordMuter, HushConfig } from '../src/types';
 
-// Records the exact order of Discord mute/unmute calls.
+// Records the exact order of Discord mute/unmute calls, and models the live
+// self-mute state so getMute() reflects it (start pre-muted via `muted`).
 class FakeMuter implements DiscordMuter {
+  muted = false;
   constructor(readonly calls: string[]) {}
-  async setMute(on: boolean) { this.calls.push(`mute:${on}`); }
+  async setMute(on: boolean) { this.muted = on; this.calls.push(`mute:${on}`); }
+  async getMute() { return this.muted; }
 }
 
 function rig(over: Partial<HushConfig> = {}, sleep?: (ms: number) => Promise<void>) {
@@ -33,6 +36,35 @@ describe('Orchestrator hold mode', () => {
     await o.onPress();
     await o.onPress();
     expect(calls).toEqual(['mute:true']);
+  });
+});
+
+describe('Orchestrator restores the prior Discord mute state', () => {
+  const cfg: HushConfig = {
+    shortcut: { mods: ['ctrl', 'alt'], key: '' },
+    discordRpc: { clientId: '', clientSecret: '' },
+    mode: 'hold',
+    unmuteDelayMs: 0,
+  };
+
+  it('leaves you muted on release if you were already muted before', async () => {
+    const calls: string[] = [];
+    const muter = new FakeMuter(calls);
+    muter.muted = true; // already self-muted in Discord
+    const o = new Orchestrator(muter, cfg);
+    await o.onPress();
+    await o.onRelease();
+    // We (idempotently) mute, but must NOT unmute someone who was already muted.
+    expect(calls).toEqual(['mute:true']);
+  });
+
+  it('unmutes on release when you were not muted before', async () => {
+    const calls: string[] = [];
+    const muter = new FakeMuter(calls); // muted === false
+    const o = new Orchestrator(muter, cfg);
+    await o.onPress();
+    await o.onRelease();
+    expect(calls).toEqual(['mute:true', 'mute:false']);
   });
 });
 
