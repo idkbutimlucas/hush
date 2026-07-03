@@ -415,26 +415,51 @@ els.capShortcut.addEventListener('click', () => captureInto('shortcut', els.capS
 
 - [ ] **Step 2: Rendre l'étape « Ton raccourci » interactive (`STEPS[3]`)**
 
-Remplacer l'objet `STEPS[3]` (celui avec `glyph: '⌨️'`, `title: 'Ton raccourci'`) par :
+Remplacer l'objet `STEPS[3]` (celui avec `glyph: '⌨️'`, `title: 'Ton raccourci'`) par la
+version avec **capture + sélecteur de mode expliqué** :
 
 ```js
   {
     glyph: '⌨️',
     title: 'Ton raccourci',
     body: `<p>Un seul réglage : ton <strong>push-to-talk</strong>. Mets <strong>exactement</strong> le même raccourci que dans Wispr Flow (Réglages → General → Shortcuts).</p>
-      <p>Hush ne simule rien : tu presses ce raccourci toi-même, Wispr dicte comme d'habitude, et Hush coupe Discord tant que tu le tiens.</p>
+      <p>Hush ne simule rien : tu presses ce raccourci toi-même, Wispr dicte comme d'habitude, et Hush coupe Discord pendant que tu dictes.</p>
       <div class="binding">
         <div class="binding-label"><strong>Push-to-talk</strong><span class="muted">identique à Wispr → Raccourcis</span></div>
         <button class="capture" id="ob-cap-shortcut">⌃⌥</button>
       </div>
-      <p class="hint">Clique puis presse ta touche. Modificateurs seuls (ex. ⌃⌥) : maintiens puis relâche. Fn (🌐) supportée. Échap = annuler.</p>`,
+      <p class="hint">Clique puis presse ta touche. Modificateurs seuls (ex. ⌃⌥) : maintiens puis relâche. Fn (🌐) supportée. Échap = annuler.</p>
+      <div class="binding">
+        <div class="binding-label"><strong>Mode</strong><span class="muted">comme dans Wispr</span></div>
+        <div class="segment" id="ob-mode-seg">
+          <button type="button" data-mode="hold" class="active">Maintenir</button>
+          <button type="button" data-mode="toggle">Bascule</button>
+        </div>
+      </div>
+      <div class="callout">🎯 <strong>Maintenir</strong> : Discord est coupé <strong>tant que tu tiens</strong> la touche. <strong>Bascule</strong> : <strong>1er appui</strong> coupe (et reste coupé), <strong>2e appui</strong> réactive. Si tu <em>tapes</em> ta touche (appui/ré-appui), choisis <strong>Bascule</strong> — sinon Discord ne se coupe qu'une fraction de seconde.</div>`,
     wire(root) {
       const btn = root.querySelector('#ob-cap-shortcut');
       btn.textContent = comboLabel(cfg.shortcut);
       btn.onclick = () => captureInto('shortcut', btn);
+
+      const modeSeg = root.querySelector('#ob-mode-seg');
+      for (const b of modeSeg.querySelectorAll('button')) {
+        b.classList.toggle('active', b.dataset.mode === cfg.mode);
+      }
+      modeSeg.addEventListener('click', async (e) => {
+        const m = e.target.dataset.mode;
+        if (!m) return;
+        cfg.mode = m;
+        for (const b of modeSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.mode === m);
+        await persist();   // no Save button in the tutorial → persist immediately
+        render();          // keep the window's Comportement segment in sync
+      });
     },
   },
 ```
+
+> Le segment de mode écrit dans `cfg.mode` et persiste tout de suite ; `render()`
+> met à jour le segment « Comportement » de la fenêtre (les deux restent alignés).
 
 - [ ] **Step 3: Build + manual test**
 
@@ -442,15 +467,17 @@ Run: `npm start`
 Vérifier :
 1. Fenêtre : le bouton de raccourci capture toujours et le libellé se met à jour.
 2. Onboarding → étape « Ton raccourci » : le bouton capture, le libellé s'affiche, et la valeur se retrouve dans la fenêtre derrière.
+3. Le segment **Mode** (Maintenir/Bascule) reflète `cfg.mode`, bascule au clic, persiste, et le segment « Comportement » de la fenêtre suit le même choix.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add renderer/renderer.js
-git commit -m "feat(onboarding): capture the shortcut inline in the tutorial
+git commit -m "feat(onboarding): capture shortcut + choose mode inline in the tutorial
 
 Generalize capture into captureInto(field, btnEl); wire a real capture
-button into the shortcut onboarding step and persist immediately.
+button and a Maintenir/Bascule mode selector (with a hold-vs-toggle
+explainer) into the shortcut onboarding step; persist immediately.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
@@ -835,7 +862,7 @@ Si un host Windows est disponible : suivre `docs/WINDOWS.md` (Option A `npm star
 
 ## Self-Review Notes
 
-- **Spec coverage** : §1 module pur → Task 1 ; §2 transition partagée → Task 2a ; §3 tray → Task 2c ; §4 menu macOS → Task 2b ; §5 segment immédiat → Task 4 ; §6 capture onboarding → Task 3 ; §7 étape Discord onboarding → Task 5. Tous couverts.
+- **Spec coverage** : §1 module pur → Task 1 ; §2 transition partagée → Task 2a ; §3 tray → Task 2c ; §4 menu macOS → Task 2b ; §5 segment immédiat → Task 4 ; §6 capture + mode onboarding → Task 3 ; §7 étape Discord onboarding → Task 5. Tous couverts.
 - **Placeholders** : aucun — chaque étape porte le code réel.
 - **Type/nom consistency** : `resolveLocationSwitch`, `applyRoleTransition`, `switchDiscordLocation`, `refreshAppMenu`, `wireRoleControls`, `refreshHostAddrs(refs)`, `captureInto` employés de façon identique partout ; refs partagent les mêmes clés entre `MAIN_ROLE_REFS` et l'objet onboarding.
 - **Piège évité** : `persist()` ne lit plus le rôle depuis le DOM (listeners `input`), sinon persister depuis l'onboarding écraserait `cfg.remote` avec les champs vides de la fenêtre.

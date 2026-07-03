@@ -189,9 +189,24 @@ Nouveau canal `config-updated` (main → renderer) : quand le rôle est basculé
 depuis le tray/menu alors que la fenêtre est ouverte, la fenêtre se resynchronise
 (`cfg = payload; render();`).
 
-### 6. Onboarding — capture du raccourci (`STEPS[3]`)
+### 6. Onboarding — capture du raccourci + mode (`STEPS[3]`)
 
-L'étape « Ton raccourci » gagne un bouton de capture réel :
+L'étape « Ton raccourci » gagne **deux** choses : un bouton de capture réel, et
+un sélecteur de **mode** (Maintenir / Bascule) avec une explication courte —
+parce que le piège n°1 en usage réel est de taper la touche (appui bref) alors
+que Hush est en « Maintenir », si bien que Discord n'est coupé qu'une fraction de
+seconde au lieu de toute la dictée. Le tuto doit rendre ce choix explicite :
+
+- **Maintenir** : Discord est coupé **tant que la touche est tenue**.
+- **Bascule** : **1er appui** coupe (et reste coupé), **2e appui** réactive.
+- Consigne : choisir **le même mode que l'usage de Wispr Flow** (tap → Bascule ;
+  maintien → Maintenir).
+
+Le segment de mode `ob-mode-seg` reprend le style du segment « Comportement » de
+la fenêtre, écrit dans `cfg.mode` et persiste immédiatement ; `render()` garde le
+segment de la fenêtre synchronisé.
+
+Bouton de capture réel :
 
 ```html
 <div class="binding">
