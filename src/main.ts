@@ -23,6 +23,7 @@ import { wsClientFactory, WsServerListener } from './mute-transport';
 import { lanAddresses, generatePairingCode } from './net';
 import { advertiseHost, browseHosts, DiscoveredHost } from './discovery';
 import { appBundlePath, canDragPermissions } from './mac-drag';
+import { resolveLocationSwitch } from './location-switch';
 
 interface MacPermissions {
   getAuthStatus(type: string): string;
@@ -92,6 +93,7 @@ function pushStatus() {
   });
   if (tray) tray.setImage(trayImage(active ? 'trayActiveTemplate' : 'trayIdleTemplate'));
   refreshTrayMenu();
+  refreshAppMenu();
 }
 
 function rpcLabel(state: 'disconnected' | 'connecting' | 'connected'): string {
@@ -113,8 +115,76 @@ function refreshTrayMenu() {
       { label: `Mode : ${cfg.mode === 'hold' ? 'Maintenir' : 'Bascule'}`, enabled: false },
       { label: `Discord : ${rpcLabel(discord.getState())}`, enabled: false },
       { type: 'separator' },
+      { label: 'Emplacement de Discord', enabled: false },
+      {
+        label: 'Cette machine',
+        type: 'radio',
+        checked: cfg.role === 'local',
+        click: () => switchDiscordLocation('local'),
+      },
+      {
+        label: cfg.remote.host ? `Autre machine — ${cfg.remote.host}` : 'Autre machine…',
+        type: 'radio',
+        checked: cfg.role === 'controller',
+        click: () => switchDiscordLocation('controller'),
+      },
+      { type: 'separator' },
       { label: 'Réglages…', click: showWindow },
       { label: 'Quitter Hush', click: () => app.quit() },
+    ]),
+  );
+}
+
+// macOS application menu (the top-of-screen menu bar). Darwin only: elsewhere we
+// leave Electron's default. Rebuilt on every status push so the Discord radios
+// track cfg.role. The Edit menu's roles are what make ⌘C/⌘V work in the text
+// fields — needed to paste the Discord Client ID / Secret.
+function refreshAppMenu(): void {
+  if (process.platform !== 'darwin') return;
+  const controllerLabel = cfg.remote.host
+    ? `Autre machine — ${cfg.remote.host}`
+    : 'Autre machine…';
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: BRAND.name,
+        submenu: [
+          { role: 'about', label: `À propos de ${BRAND.name}` },
+          { type: 'separator' },
+          { role: 'quit', label: `Quitter ${BRAND.name}` },
+        ],
+      },
+      {
+        label: 'Édition',
+        submenu: [
+          { role: 'undo', label: 'Annuler' },
+          { role: 'redo', label: 'Rétablir' },
+          { type: 'separator' },
+          { role: 'cut', label: 'Couper' },
+          { role: 'copy', label: 'Copier' },
+          { role: 'paste', label: 'Coller' },
+          { role: 'selectAll', label: 'Tout sélectionner' },
+        ],
+      },
+      {
+        label: 'Discord',
+        submenu: [
+          {
+            label: 'Cette machine',
+            type: 'radio',
+            checked: cfg.role === 'local',
+            click: () => switchDiscordLocation('local'),
+          },
+          {
+            label: controllerLabel,
+            type: 'radio',
+            checked: cfg.role === 'controller',
+            click: () => switchDiscordLocation('controller'),
+          },
+          { type: 'separator' },
+          { label: 'Réglages…', click: showWindow },
+        ],
+      },
     ]),
   );
 }
@@ -344,6 +414,60 @@ function cleanup() {
   stopHost();
 }
 
+// Bring the app in line with a config that has ALREADY been saved: re-arm the
+// input (applyConfig) then set up the cross-machine resources for the new role.
+// Shared by the settings window (config:set) and the fast tray/menu switch so
+// both take exactly the same path.
+function applyRoleTransition(prev: HushConfig, saved: HushConfig): void {
+  applyConfig(saved);
+
+  // Tear down BOTH cross-machine resources unconditionally before bringing up the
+  // new role — mirrors how applyConfig() already released the input/orchestrator.
+  stopHost();
+  remote.disconnect();
+
+  const credsChanged =
+    saved.discordRpc.clientId !== prev.discordRpc.clientId ||
+    saved.discordRpc.clientSecret !== prev.discordRpc.clientSecret;
+
+  if (saved.role === 'controller') {
+    // Controller mutes the remote host, not local Discord.
+    void discord.disconnect();
+    connectRemote();
+  } else {
+    // Both 'local' and 'host' drive the LOCAL Discord RPC. Reconnect only when it
+    // isn't already up (e.g. returning from controller) or the creds changed —
+    // so a pure host-setting resave never drops a live socket mid-mute.
+    if (saved.role === 'host') startHost();
+    if (!discord.isConnected() || credsChanged) void connectDiscord();
+  }
+}
+
+// Fast local ↔ controller switch triggered outside the window (tray / macOS
+// menu). Reuses the stored remote config so a controller flip needs no re-entry.
+function switchDiscordLocation(target: 'local' | 'controller'): void {
+  const decision = resolveLocationSwitch(
+    target,
+    Boolean(cfg.remote.host && cfg.remote.pairingCode),
+  );
+  if ('needsConfig' in decision) {
+    // Nothing to flip to blindly — open the window on the location card so the
+    // user can enter the host IP + pairing code.
+    showWindow();
+    win?.webContents.send('focus-location');
+    return;
+  }
+  if (decision.role === cfg.role) return; // already there
+  try {
+    const prev = cfg;
+    const saved = saveConfig({ ...cfg, role: decision.role });
+    applyRoleTransition(prev, saved);
+    win?.webContents.send('config-updated', saved); // resync an open window
+  } catch (err) {
+    dbg('switchDiscordLocation failed', err instanceof Error ? err.message : String(err));
+  }
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -394,28 +518,7 @@ if (!app.requestSingleInstanceLock()) {
       try {
         const prev = cfg; // note: cfg is reassigned inside applyConfig(saved)
         const saved = saveConfig(next);
-        applyConfig(saved);
-
-        // Tear down BOTH cross-machine resources unconditionally before bringing up the
-        // new role — mirrors how applyConfig() already released the input/orchestrator.
-        stopHost();
-        remote.disconnect();
-
-        const credsChanged =
-          saved.discordRpc.clientId !== prev.discordRpc.clientId ||
-          saved.discordRpc.clientSecret !== prev.discordRpc.clientSecret;
-
-        if (saved.role === 'controller') {
-          // Controller mutes the remote host, not local Discord.
-          void discord.disconnect();
-          connectRemote();
-        } else {
-          // Both 'local' and 'host' drive the LOCAL Discord RPC. Reconnect only when it
-          // isn't already up (e.g. returning from controller) or the creds changed —
-          // so a pure host-setting resave never drops a live socket mid-mute.
-          if (saved.role === 'host') startHost();
-          if (!discord.isConnected() || credsChanged) void connectDiscord();
-        }
+        applyRoleTransition(prev, saved);
         return { ok: true, config: saved };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };

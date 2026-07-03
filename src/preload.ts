@@ -13,6 +13,10 @@ const bridge = {
   openExternal: (url: string) => ipcRenderer.send('app:open-external', url),
   quit: () => ipcRenderer.send('app:quit'),
   onStatus: (cb: (s: unknown) => void) => ipcRenderer.on('status', (_e, s) => cb(s)),
+  onConfigUpdated: (cb: (cfg: unknown) => void) =>
+    ipcRenderer.on('config-updated', (_e, cfg) => cb(cfg)),
+  onFocusLocation: (cb: () => void) =>
+    ipcRenderer.on('focus-location', () => cb()),
   reconnectRpc: () => ipcRenderer.invoke('rpc:reconnect'),
   lanInfo: () => ipcRenderer.invoke('net:lan-info'),
   genCode: () => ipcRenderer.invoke('net:gen-code'),
