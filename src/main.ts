@@ -133,12 +133,21 @@ function applyConfig(next: HushConfig) {
 }
 
 let rpcRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let connectInFlight: Promise<void> | null = null;
+
+// Public entry point: coalesce concurrent callers onto one in-flight attempt so
+// two callers can't both spend the (single-use, server-rotated) refresh token.
+function connectDiscord(): Promise<void> {
+  if (connectInFlight) return connectInFlight;
+  connectInFlight = doConnectDiscord().finally(() => { connectInFlight = null; });
+  return connectInFlight;
+}
 
 // (Re)connect the Discord RPC from the current config. Best-effort: failures are
 // captured in the muter's state and surfaced via status, never thrown. Reuses a
 // cached OAuth token (no authorize popup) and, if Discord isn't running yet,
 // retries quietly so it connects on its own once Discord opens.
-async function connectDiscord(): Promise<void> {
+async function doConnectDiscord(): Promise<void> {
   if (rpcRetryTimer) { clearTimeout(rpcRetryTimer); rpcRetryTimer = null; }
   const { clientId, clientSecret } = cfg.discordRpc;
   if (!clientId || !clientSecret) {

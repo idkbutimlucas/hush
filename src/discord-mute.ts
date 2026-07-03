@@ -173,8 +173,13 @@ export class DiscordRpcMuter implements DiscordMuter {
     if (gen !== this.generation) return false;
     this.closing = false;
 
+    // Hoisted above the try so a failure AFTER a successful client.connect()
+    // (e.g. authenticate() rejects, or exchangeCode() throws post-AUTHORIZE)
+    // can still reach the client in the catch block and destroy() it —
+    // otherwise the open IPC socket is merely dereferenced and leaks an fd.
+    let client: RpcClient | null = null;
     try {
-      const client = this.deps.createClient();
+      client = this.deps.createClient();
       this.client = client;
       client.on('disconnected', () => {
         if (gen === this.generation) this.handleDrop();
@@ -246,6 +251,10 @@ export class DiscordRpcMuter implements DiscordMuter {
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // A post-connect failure (authenticate() rejected, token exchange threw,
+      // etc.) still leaves the IPC socket open — destroy it so it isn't just
+      // dereferenced and leaked as a dangling fd.
+      if (client) { try { client.destroy(); } catch { /* noop */ } }
       if (gen === this.generation) {
         this.client = null;
         this.state = 'disconnected';

@@ -67,15 +67,24 @@ credentials in the body — it must NOT reuse the library's `client.fetch` (whic
 
 `DiscordRpcMuter.connect()` new order (client injected/lazy-required as today):
 1. `await client.connect(clientId)` (bounded timeout).
-2. Acquire a token set:
-   - have a **refresh token** → `refreshTokens(...)`; on success use it (and store the
-     rotated refresh token);
-   - else have a **non-expired access token** → use it directly;
+2. Acquire a token set, **cheapest/quietest first** (avoid a needless HTTP round-trip
+   when the cached token is still good):
+   - have a **non-expired cached access token** (`!isExpired(tokenExpiresAt, now)`) →
+     use it directly, no network;
+   - else have a **refresh token** → `refreshTokens(...)`; on success use it (and store
+     the rotated refresh token);
    - else (first run, or refresh failed) → `{ code } = await client.request('AUTHORIZE',
      { scopes, client_id })` (**popup, once**) → `exchangeCode(...)`.
-3. `await client.authenticate(tokenSet.accessToken)`.
-4. Expose `getTokens(): TokenSet | null` so `main.ts` persists access + refresh +
+3. Store the obtained token set **immediately** (before `authenticate()`), so a rotated
+   refresh token is never lost if `authenticate()` then fails.
+4. `await client.authenticate(tokenSet.accessToken)`.
+5. Expose `getTokens(): TokenSet | null` so `main.ts` persists access + refresh +
    expiresAt.
+
+Concurrency: `connect()` carries a **generation counter**; a superseded (stale)
+attempt's completion/catch is a no-op and must not clobber a newer attempt's client or
+state. The disconnect **watchdog** (`handleDrop`) only fires `onDrop` when the state was
+`connected` (a genuine live-session drop), never during an in-flight handshake.
 
 ### Config
 

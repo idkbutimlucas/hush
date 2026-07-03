@@ -40,6 +40,7 @@ class FakeRpcClient {
   calls: { name: string; args: unknown[] }[] = [];
   handlers: Record<string, (...args: unknown[]) => void> = {};
   authorizeResponse: { code: string } = { code: 'fake-code' };
+  destroyed = false;
 
   on(event: string, cb: (...args: unknown[]) => void): void {
     this.handlers[event] = cb;
@@ -71,6 +72,7 @@ class FakeRpcClient {
   }
 
   async destroy(): Promise<void> {
+    this.destroyed = true;
     this.calls.push({ name: 'destroy', args: [] });
   }
 }
@@ -377,6 +379,34 @@ describe('DiscordRpcMuter drop watchdog', () => {
     // with the old (now dead, server-rotated) refresh token would otherwise
     // fall through to the AUTHORIZE popup.
     expect(m.getTokens()).toEqual({ accessToken: 'new', refreshToken: 'r2', tokenExpiresAt: 123 });
+  });
+
+  it('destroys the client when a post-connect step fails (authenticate rejects)', async () => {
+    // client.connect() succeeds (the IPC socket is open) but authenticate()
+    // rejects afterwards. The socket must not just be dereferenced — it has
+    // to be destroy()ed, or a long-running, auto-retrying session leaks fds.
+    let capturedClient: FakeRpcClient | null = null;
+    const m = new DiscordRpcMuter({
+      createClient: () => {
+        capturedClient = new FakeRpcClient();
+        capturedClient.authenticate = async () => {
+          throw new Error('discord rejected the access token');
+        };
+        return capturedClient as any;
+      },
+      oauth: makeFakeOauth({ isExpired: vi.fn(() => false) }) as any,
+      fetchImpl: (async () => {
+        throw new Error('unused fetch');
+      }) as any,
+      now: () => 1000,
+    });
+
+    const ok = await m.connect('cid', 'secret', { accessToken: 'tok', tokenExpiresAt: 999999 });
+
+    expect(ok).toBe(false);
+    expect(m.isConnected()).toBe(false);
+    const client = capturedClient as unknown as FakeRpcClient;
+    expect(client.destroyed).toBe(true);
   });
 
   it('re-arms the drop watchdog after a disconnect + reconnect', async () => {
