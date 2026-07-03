@@ -1,12 +1,15 @@
 import { DiscordMuter } from './types';
 import { dbg } from './debug';
 import {
-  ClientSocket, ClientSocketFactory, encode, decode, PROTOCOL_VERSION, WireMessage,
+  ClientSocket, ClientSocketFactory, encode, decode, PROTOCOL_VERSION, WireMessage, HEARTBEAT_MS,
 } from './mute-protocol';
 
 export type RemoteState = 'disconnected' | 'connecting' | 'connected';
 
 const RECONNECT_MS = 3000;
+
+// Injectable interval timer: call `tick` every HEARTBEAT_MS, returns a cancel fn.
+export type Heartbeat = (tick: () => void) => (() => void);
 
 // Controller-side muter: instead of a local Discord RPC socket, it forwards the
 // orchestrator's mute/unmute to a host over the LAN. Best-effort by design — when
@@ -20,11 +23,15 @@ export class RemoteDiscordMuter implements DiscordMuter {
   private host = '';
   private port = 0;
   private code = '';
+  private stopHeartbeat: (() => void) | null = null;
+  private awaitingPong = false;   // a ping is out; a second tick without a pong means dead
 
   constructor(
     private readonly factory: ClientSocketFactory,
     private readonly schedule: (fn: () => void) => void =
       (fn) => { setTimeout(fn, RECONNECT_MS); },
+    private readonly heartbeat: Heartbeat =
+      (tick) => { const id = setInterval(tick, HEARTBEAT_MS); return () => clearInterval(id); },
   ) {}
 
   getState(): RemoteState { return this.state; }
@@ -59,8 +66,11 @@ export class RemoteDiscordMuter implements DiscordMuter {
         this.state = 'connected';
         this.lastError = null;
         dbg('remote: connected');
+        this.startHeartbeat(sock);
         // Re-assert whatever the orchestrator currently wants (mid-hold reconnect).
         sock.send(encode({ t: 'mute', on: this.desiredMute }));
+      } else if (msg.t === 'pong') {
+        this.awaitingPong = false;
       } else if (msg.t === 'reject') {
         this.lastError = msg.reason || 'rejected by host';
         dbg('remote: rejected', this.lastError);
@@ -72,11 +82,31 @@ export class RemoteDiscordMuter implements DiscordMuter {
     });
     sock.onClose(() => {
       if (this.sock !== sock) return;
+      this.clearHeartbeat();
       this.sock = null;
       if (this.state === 'connected') dbg('remote: link dropped');
       this.state = 'disconnected';
       if (this.wanted) this.schedule(() => this.open());
     });
+  }
+
+  // Proactive liveness: the host only learns we're gone when its own ping times
+  // out; we do the same the other way so a half-open link after sleep is caught
+  // here and torn down, which fires onClose and the reconnect loop.
+  private startHeartbeat(sock: ClientSocket): void {
+    this.clearHeartbeat();
+    this.awaitingPong = false;
+    this.stopHeartbeat = this.heartbeat(() => {
+      if (this.sock !== sock) return;            // stale timer from an old socket
+      if (this.awaitingPong) { sock.close(); return; } // missed a pong → dead link
+      this.awaitingPong = true;
+      sock.send(encode({ t: 'ping' }));
+    });
+  }
+
+  private clearHeartbeat(): void {
+    if (this.stopHeartbeat) { this.stopHeartbeat(); this.stopHeartbeat = null; }
+    this.awaitingPong = false;
   }
 
   async setMute(on: boolean): Promise<void> {
@@ -96,6 +126,7 @@ export class RemoteDiscordMuter implements DiscordMuter {
 
   disconnect(): void {
     this.wanted = false;
+    this.clearHeartbeat();
     if (this.sock) { try { this.sock.close(); } catch { /* noop */ } }
     this.sock = null;
     this.state = 'disconnected';
