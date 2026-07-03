@@ -54,8 +54,6 @@ const els = {
   regenCodeBtn: $('regen-code-btn'),
 };
 
-const CAP = { shortcut: els.capShortcut };
-
 function render() {
   els.capShortcut.textContent = comboLabel(cfg.shortcut);
   for (const b of els.modeSeg.querySelectorAll('button')) {
@@ -115,30 +113,35 @@ function syncRoleInputs() {
   };
 }
 
-async function startCapture(field) {
+// Arm a capture button, record the pressed combo into cfg[field], persist it,
+// and refresh every button that shows this shortcut (window + onboarding).
+async function captureInto(field, btnEl) {
   if (armedField) return; // one at a time
   armedField = field;
   els.err.textContent = '';
-  CAP[field].classList.add('armed');
-  CAP[field].textContent = 'Appuie…';
+  btnEl.classList.add('armed');
+  btnEl.textContent = 'Appuie…';
 
   const res = await window.hush.captureCombo();
 
   if (res.combo) {
     cfg[field] = res.combo;
+    await persist();
   } else if (res.reason === 'unsupported') {
     els.err.textContent = 'Touche non gérée — utilise une lettre, un chiffre ou F1–F24 (avec ⌃⌥⌘⇧ en option).';
   } else if (res.reason === 'timeout') {
     els.err.textContent = 'Rien capté. Active « Surveillance de la saisie » pour Hush, puis relance l\'app.';
   }
-  CAP[field].classList.remove('armed');
+
+  btnEl.classList.remove('armed');
   armedField = null;
   render();
+  // Keep the onboarding button (if the tutorial is on the shortcut step) in sync.
+  const obBtn = document.getElementById('ob-cap-shortcut');
+  if (obBtn) obBtn.textContent = comboLabel(cfg.shortcut);
 }
 
-for (const [field, btn] of Object.entries(CAP)) {
-  btn.addEventListener('click', () => startCapture(field));
-}
+els.capShortcut.addEventListener('click', () => captureInto('shortcut', els.capShortcut));
 
 els.modeSeg.addEventListener('click', (e) => {
   const m = e.target.dataset.mode;
@@ -413,8 +416,38 @@ const STEPS = [
     glyph: '⌨️',
     title: 'Ton raccourci',
     body: `<p>Un seul réglage : ton <strong>push-to-talk</strong>. Mets <strong>exactement</strong> le même raccourci que dans Wispr Flow (Réglages → General → Shortcuts).</p>
-      <p>Hush ne simule rien : tu presses ce raccourci toi-même, Wispr dicte comme d'habitude, et Hush coupe Discord tant que tu le tiens.</p>
-      <p>Tu le règles dans la fenêtre principale, juste derrière — clique sur le bouton de raccourci et presse ta touche.</p>`,
+      <p>Hush ne simule rien : tu presses ce raccourci toi-même, Wispr dicte comme d'habitude, et Hush coupe Discord pendant que tu dictes.</p>
+      <div class="binding">
+        <div class="binding-label"><strong>Push-to-talk</strong><span class="muted">identique à Wispr → Raccourcis</span></div>
+        <button class="capture" id="ob-cap-shortcut">⌃⌥</button>
+      </div>
+      <p class="hint">Clique puis presse ta touche. Modificateurs seuls (ex. ⌃⌥) : maintiens puis relâche. Fn (🌐) supportée. Échap = annuler.</p>
+      <div class="binding">
+        <div class="binding-label"><strong>Mode</strong><span class="muted">comme dans Wispr</span></div>
+        <div class="segment" id="ob-mode-seg">
+          <button type="button" data-mode="hold" class="active">Maintenir</button>
+          <button type="button" data-mode="toggle">Bascule</button>
+        </div>
+      </div>
+      <div class="callout">🎯 <strong>Maintenir</strong> : Discord est coupé <strong>tant que tu tiens</strong> la touche. <strong>Bascule</strong> : <strong>1er appui</strong> coupe (et reste coupé), <strong>2e appui</strong> réactive. Si tu <em>tapes</em> ta touche (appui/ré-appui), choisis <strong>Bascule</strong> — sinon Discord ne se coupe qu'une fraction de seconde.</div>`,
+    wire(root) {
+      const btn = root.querySelector('#ob-cap-shortcut');
+      btn.textContent = comboLabel(cfg.shortcut);
+      btn.onclick = () => captureInto('shortcut', btn);
+
+      const modeSeg = root.querySelector('#ob-mode-seg');
+      for (const b of modeSeg.querySelectorAll('button')) {
+        b.classList.toggle('active', b.dataset.mode === cfg.mode);
+      }
+      modeSeg.addEventListener('click', async (e) => {
+        const m = e.target.dataset.mode;
+        if (!m) return;
+        cfg.mode = m;
+        for (const b of modeSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.mode === m);
+        await persist();   // no Save button in the tutorial → persist immediately
+        render();          // keep the window's Comportement segment in sync
+      });
+    },
   },
   {
     glyph: '🖥️',
