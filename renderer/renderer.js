@@ -54,6 +54,18 @@ const els = {
   regenCodeBtn: $('regen-code-btn'),
 };
 
+// Element set for the main-window role controls. The onboarding step builds an
+// equivalent set with ob-* ids and passes it to the same wireRoleControls().
+const MAIN_ROLE_REFS = {
+  roleSeg: els.roleSeg, controllerPanel: els.controllerPanel,
+  discoverBtn: els.discoverBtn, hostList: els.hostList,
+  remoteHost: els.remoteHost, remotePort: els.remotePort, remoteCode: els.remoteCode,
+  remoteConnect: els.remoteConnect, remoteStatus: els.remoteStatus,
+  hostToggle: els.hostToggle, hostPanel: els.hostPanel,
+  hostAddrs: els.hostAddrs, hostPort: els.hostPort, hostCode: els.hostCode,
+  regenCodeBtn: els.regenCodeBtn,
+};
+
 function render() {
   els.capShortcut.textContent = comboLabel(cfg.shortcut);
   for (const b of els.modeSeg.querySelectorAll('button')) {
@@ -85,9 +97,9 @@ function renderRole() {
   els.hostCode.value = cfg.hostListen.pairingCode || '';
 }
 
-async function refreshHostAddrs() {
+async function refreshHostAddrs(refs) {
   const info = await window.hush.lanInfo();
-  els.hostAddrs.textContent = info.addresses.length ? info.addresses.join(', ') : 'aucune IP LAN';
+  refs.hostAddrs.textContent = info.addresses.length ? info.addresses.join(', ') : 'aucune IP LAN';
 }
 
 // Pull the RPC credentials out of whichever inputs are on screen into cfg.
@@ -95,21 +107,6 @@ function syncRpcInputs() {
   cfg.discordRpc = {
     clientId: els.rpcId.value.trim(),
     clientSecret: els.rpcSecret.value.trim(),
-  };
-}
-
-// Pull the role-panel (controller/host) inputs out of whichever fields are on
-// screen into cfg. Does NOT touch cfg.role — the role-segment/host-toggle
-// handlers already keep that in sync on every interaction.
-function syncRoleInputs() {
-  cfg.remote = {
-    host: els.remoteHost.value.trim(),
-    port: Number(els.remotePort.value) || 8698,
-    pairingCode: els.remoteCode.value.trim(),
-  };
-  cfg.hostListen = {
-    port: Number(els.hostPort.value) || 8698,
-    pairingCode: els.hostCode.value.trim(),
   };
 }
 
@@ -156,79 +153,105 @@ els.delay.addEventListener('input', () => {
 });
 
 // ---- Où est Discord ? (cross-machine role) ----
-els.roleSeg.addEventListener('click', (e) => {
-  const r = e.target.dataset.role;
-  if (!r) return;
-  if (els.hostToggle.checked) { els.hostToggle.checked = false; els.hostPanel.hidden = true; }
-  for (const b of els.roleSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.role === r);
-  els.controllerPanel.hidden = r !== 'controller';
-  cfg.role = r;
-});
-
-els.hostToggle.addEventListener('change', async () => {
-  const checked = els.hostToggle.checked;
-  els.hostPanel.hidden = !checked;
-  if (!checked) {
-    // Fall back to whichever of local/controller the segment is showing.
-    const active = els.roleSeg.querySelector('button.active');
-    cfg.role = active?.dataset.role === 'controller' ? 'controller' : 'local';
-    await persist();
-    return;
-  }
-  // Hosting is exclusive with being a controller of a remote machine.
-  for (const b of els.roleSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.role === 'local');
-  els.controllerPanel.hidden = true;
-  cfg.role = 'host';
-  await refreshHostAddrs();
-  if (!cfg.hostListen.pairingCode) cfg.hostListen.pairingCode = await window.hush.genCode();
-  els.hostCode.value = cfg.hostListen.pairingCode;
-  els.hostPort.value = String(cfg.hostListen.port || 8698);
-  await persist();
-});
-
-els.regenCodeBtn.addEventListener('click', async () => {
-  cfg.hostListen.pairingCode = await window.hush.genCode();
-  els.hostCode.value = cfg.hostListen.pairingCode;
-  await persist();
-});
-
-els.discoverBtn.addEventListener('click', async () => {
-  els.hostList.innerHTML = '<li>Recherche…</li>';
-  const hosts = await window.hush.discoverHosts();
-  els.hostList.innerHTML = '';
-  if (!hosts.length) {
-    els.hostList.innerHTML = "<li>Aucun hôte trouvé — saisis l'IP.</li>";
-    return;
-  }
-  for (const h of hosts) {
-    const li = document.createElement('li');
-    li.textContent = `${h.name} — ${h.host}:${h.port}`;
-    li.addEventListener('click', () => {
-      els.remoteHost.value = h.host;
-      els.remotePort.value = String(h.port);
-    });
-    els.hostList.appendChild(li);
-  }
-});
-
-els.remoteConnect.addEventListener('click', async () => {
-  cfg.role = 'controller';
-  cfg.remote = {
-    host: els.remoteHost.value.trim(),
-    port: Number(els.remotePort.value) || 8698,
-    pairingCode: els.remoteCode.value.trim(),
+// Wire a full set of role controls (segment, host toggle, discover, remote/host
+// fields, connect, regen) onto the shared persist()/discover/genCode handlers.
+// Live `input` listeners keep cfg.remote / cfg.hostListen current, so persist()
+// no longer needs to read these fields out of the DOM — which is what lets the
+// onboarding step reuse this with ob-* elements without clobbering cfg.
+function wireRoleControls(refs) {
+  // Keep cfg in sync as the user types (works for window AND onboarding fields).
+  const syncRemote = () => {
+    cfg.remote = {
+      host: refs.remoteHost.value.trim(),
+      port: Number(refs.remotePort.value) || 8698,
+      pairingCode: refs.remoteCode.value.trim(),
+    };
   };
-  els.remoteStatus.textContent = 'Connexion…';
-  els.remoteStatus.className = 'pill pill-warn';
-  if (!(await persist())) {
-    els.remoteStatus.textContent = 'Non connecté';
-    els.remoteStatus.className = 'pill pill-off';
-  }
-});
+  const syncHost = () => {
+    cfg.hostListen = {
+      port: Number(refs.hostPort.value) || 8698,
+      pairingCode: refs.hostCode.value.trim(),
+    };
+  };
+  refs.remoteHost.addEventListener('input', syncRemote);
+  refs.remotePort.addEventListener('input', syncRemote);
+  refs.remoteCode.addEventListener('input', syncRemote);
+  refs.hostPort.addEventListener('input', syncHost);
+
+  // Segment: Cette machine / Autre machine. Persist immediately so the switch
+  // takes effect without a Save; controller persists only when a remote config
+  // is already known (otherwise just reveal the panel and wait for Connecter).
+  refs.roleSeg.addEventListener('click', async (e) => {
+    const r = e.target.dataset.role;
+    if (!r) return;
+    if (refs.hostToggle.checked) { refs.hostToggle.checked = false; refs.hostPanel.hidden = true; }
+    for (const b of refs.roleSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.role === r);
+    refs.controllerPanel.hidden = r !== 'controller';
+    cfg.role = r;
+    if (r === 'local' || (cfg.remote.host && cfg.remote.pairingCode)) await persist();
+  });
+
+  refs.hostToggle.addEventListener('change', async () => {
+    const checked = refs.hostToggle.checked;
+    refs.hostPanel.hidden = !checked;
+    if (!checked) {
+      const active = refs.roleSeg.querySelector('button.active');
+      cfg.role = active?.dataset.role === 'controller' ? 'controller' : 'local';
+      await persist();
+      return;
+    }
+    for (const b of refs.roleSeg.querySelectorAll('button')) b.classList.toggle('active', b.dataset.role === 'local');
+    refs.controllerPanel.hidden = true;
+    cfg.role = 'host';
+    await refreshHostAddrs(refs);
+    if (!cfg.hostListen.pairingCode) cfg.hostListen.pairingCode = await window.hush.genCode();
+    refs.hostCode.value = cfg.hostListen.pairingCode;
+    refs.hostPort.value = String(cfg.hostListen.port || 8698);
+    syncHost();
+    await persist();
+  });
+
+  refs.regenCodeBtn.addEventListener('click', async () => {
+    cfg.hostListen.pairingCode = await window.hush.genCode();
+    refs.hostCode.value = cfg.hostListen.pairingCode;
+    syncHost();
+    await persist();
+  });
+
+  refs.discoverBtn.addEventListener('click', async () => {
+    refs.hostList.innerHTML = '<li>Recherche…</li>';
+    const hosts = await window.hush.discoverHosts();
+    refs.hostList.innerHTML = '';
+    if (!hosts.length) {
+      refs.hostList.innerHTML = "<li>Aucun hôte trouvé — saisis l'IP.</li>";
+      return;
+    }
+    for (const h of hosts) {
+      const li = document.createElement('li');
+      li.textContent = `${h.name} — ${h.host}:${h.port}`;
+      li.addEventListener('click', () => {
+        refs.remoteHost.value = h.host;
+        refs.remotePort.value = String(h.port);
+        syncRemote();
+      });
+      refs.hostList.appendChild(li);
+    }
+  });
+
+  refs.remoteConnect.addEventListener('click', async () => {
+    cfg.role = 'controller';
+    syncRemote();
+    refs.remoteStatus.textContent = 'Connexion…';
+    refs.remoteStatus.className = 'pill pill-warn';
+    if (!(await persist())) {
+      refs.remoteStatus.textContent = 'Non connecté';
+      refs.remoteStatus.className = 'pill pill-off';
+    }
+  });
+}
 
 async function persist() {
   syncRpcInputs();
-  syncRoleInputs();
   els.err.textContent = '';
   const res = await window.hush.saveConfig(cfg);
   if (!res.ok) {
@@ -513,7 +536,8 @@ async function init() {
   document.title = brand.name;
   cfg = await window.hush.getConfig();
   render();
-  if (cfg.role === 'host') refreshHostAddrs();
+  wireRoleControls(MAIN_ROLE_REFS);
+  if (cfg.role === 'host') refreshHostAddrs(MAIN_ROLE_REFS);
   refreshPermissions();
   setInterval(refreshPermissions, 2000);
   await initPermDrag(); // resolve drag availability before onboarding may render step 2
