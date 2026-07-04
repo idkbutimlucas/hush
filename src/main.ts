@@ -5,6 +5,7 @@ import { uIOhook } from 'uiohook-napi';
 import { BRAND } from './brand';
 import { Combo, DiscordMuter, HushConfig, InputEngine, Mod } from './types';
 import { loadConfig, saveConfig } from './store';
+import { preserveDiscordTokens } from './config';
 import { comboLabel, normalizeMods, isFnCombo } from './combo';
 import { FnInputEngine } from './fn-input';
 import { fnAvailable, isFnDown } from './fn-key';
@@ -542,7 +543,13 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.handle('config:set', (_e, next: HushConfig) => {
       try {
         const prev = cfg; // note: cfg is reassigned inside applyConfig(saved)
-        const saved = saveConfig(next);
+        // Never let the renderer's token-less discordRpc wipe the OAuth tokens
+        // main holds — otherwise every save forces a re-authorize popup.
+        const merged: HushConfig = {
+          ...next,
+          discordRpc: preserveDiscordTokens(prev.discordRpc, next.discordRpc),
+        };
+        const saved = saveConfig(merged);
         applyRoleTransition(prev, saved);
         // Only touch the OS login item when the toggle actually changed.
         if (saved.launchAtLogin !== prev.launchAtLogin) applyLaunchAtLogin(saved);

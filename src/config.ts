@@ -1,4 +1,4 @@
-import { HushConfig } from './types';
+import { DiscordRpc, HushConfig } from './types';
 
 export const DEFAULT_PORT = 8698;
 
@@ -47,4 +47,20 @@ export function validateConfig(cfg: HushConfig): void {
 export function getConfig(): HushConfig {
   validateConfig(DEFAULT_CONFIG);
   return DEFAULT_CONFIG;
+}
+
+// The renderer only ever knows the Discord clientId/secret — it doesn't carry
+// the OAuth tokens Hush obtained at runtime. Saving its config verbatim would
+// wipe those tokens and force a re-authorize popup on the next launch. Carry the
+// existing tokens forward UNLESS the credentials changed (a new Discord app
+// invalidates them). If `next` already carries tokens, they win.
+export function preserveDiscordTokens(prev: DiscordRpc, next: DiscordRpc): DiscordRpc {
+  const sameCreds = prev.clientId === next.clientId && prev.clientSecret === next.clientSecret;
+  if (!sameCreds) return { clientId: next.clientId, clientSecret: next.clientSecret };
+  return {
+    ...next,
+    accessToken: next.accessToken ?? prev.accessToken,
+    refreshToken: next.refreshToken ?? prev.refreshToken,
+    tokenExpiresAt: next.tokenExpiresAt ?? prev.tokenExpiresAt,
+  };
 }

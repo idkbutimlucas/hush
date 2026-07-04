@@ -94,3 +94,42 @@ describe('launch at login', () => {
     expect(() => validateConfig({ ...DEFAULT_CONFIG, launchAtLogin: false })).not.toThrow();
   });
 });
+
+import { preserveDiscordTokens } from '../src/config';
+
+describe('preserveDiscordTokens', () => {
+  const withTokens = {
+    clientId: 'id', clientSecret: 'secret',
+    accessToken: 'A', refreshToken: 'R', tokenExpiresAt: 123,
+  };
+
+  it('carries tokens forward when credentials are unchanged and next has none', () => {
+    const next = { clientId: 'id', clientSecret: 'secret' };
+    expect(preserveDiscordTokens(withTokens, next)).toEqual({
+      clientId: 'id', clientSecret: 'secret',
+      accessToken: 'A', refreshToken: 'R', tokenExpiresAt: 123,
+    });
+  });
+
+  it('drops tokens when the clientId changes (new Discord app invalidates them)', () => {
+    const next = { clientId: 'other', clientSecret: 'secret' };
+    expect(preserveDiscordTokens(withTokens, next)).toEqual({
+      clientId: 'other', clientSecret: 'secret',
+    });
+  });
+
+  it('drops tokens when the clientSecret changes', () => {
+    const next = { clientId: 'id', clientSecret: 'new' };
+    expect(preserveDiscordTokens(withTokens, next)).toEqual({
+      clientId: 'id', clientSecret: 'new',
+    });
+  });
+
+  it('prefers tokens the renderer did carry over the previous ones', () => {
+    const next = {
+      clientId: 'id', clientSecret: 'secret',
+      accessToken: 'A2', refreshToken: 'R2', tokenExpiresAt: 999,
+    };
+    expect(preserveDiscordTokens(withTokens, next)).toEqual(next);
+  });
+});

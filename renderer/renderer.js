@@ -105,9 +105,11 @@ async function refreshHostAddrs(refs) {
   refs.hostAddrs.textContent = info.addresses.length ? info.addresses.join(', ') : 'aucune IP LAN';
 }
 
-// Pull the RPC credentials out of whichever inputs are on screen into cfg.
+// Pull the RPC credentials out of whichever inputs are on screen into cfg,
+// preserving any OAuth token fields main previously handed us (config:get).
 function syncRpcInputs() {
   cfg.discordRpc = {
+    ...cfg.discordRpc,
     clientId: els.rpcId.value.trim(),
     clientSecret: els.rpcSecret.value.trim(),
   };
