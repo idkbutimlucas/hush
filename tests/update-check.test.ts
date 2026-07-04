@@ -24,9 +24,9 @@ describe('compareVersions', () => {
 });
 
 describe('parseLatestRelease', () => {
-  it('extracts version + url from a valid payload', () => {
+  it('extracts version + url from a valid payload, stripping a leading v', () => {
     expect(parseLatestRelease({ tag_name: 'v0.2.0', html_url: 'https://x/rel' }))
-      .toEqual({ version: 'v0.2.0', url: 'https://x/rel' });
+      .toEqual({ version: '0.2.0', url: 'https://x/rel' });
   });
   it('returns null when a field is missing or non-string', () => {
     expect(parseLatestRelease({ tag_name: 'v0.2.0' })).toBeNull();
@@ -37,6 +37,9 @@ describe('parseLatestRelease', () => {
     expect(parseLatestRelease(null)).toBeNull();
     expect(parseLatestRelease('nope')).toBeNull();
   });
+  it('returns null for a non-https url', () => {
+    expect(parseLatestRelease({ tag_name: 'v0.2.0', html_url: 'http://x/rel' })).toBeNull();
+  });
 });
 
 describe('checkForUpdate', () => {
@@ -46,7 +49,7 @@ describe('checkForUpdate', () => {
   it('returns the release when it is newer', async () => {
     const fetchImpl = ok({ tag_name: 'v0.2.0', html_url: 'https://x/rel' });
     expect(await checkForUpdate(fetchImpl, '0.1.7'))
-      .toEqual({ version: 'v0.2.0', url: 'https://x/rel' });
+      .toEqual({ version: '0.2.0', url: 'https://x/rel' });
   });
   it('returns null when the release is equal or older', async () => {
     expect(await checkForUpdate(ok({ tag_name: 'v0.1.7', html_url: 'https://x' }), '0.1.7')).toBeNull();

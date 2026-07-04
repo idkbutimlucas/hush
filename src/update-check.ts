@@ -45,7 +45,8 @@ export function parseLatestRelease(json: unknown): UpdateInfo | null {
   const url = obj.html_url;
   if (typeof version !== 'string' || typeof url !== 'string') return null;
   if (!version || !url) return null;
-  return { version, url };
+  if (!url.startsWith('https://')) return null;
+  return { version: version.replace(/^v/, ''), url };
 }
 
 // Returns the newer release ({ version, url }) if one exists, else null.
