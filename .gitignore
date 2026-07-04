@@ -9,3 +9,6 @@ native/bin/
 
 # Local Claude Code settings & worktrees
 .claude/
+
+# Stray tsc output — sources live in src/, never at the repo root
+/*.js
