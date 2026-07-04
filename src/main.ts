@@ -25,6 +25,7 @@ import { lanAddresses, generatePairingCode } from './net';
 import { advertiseHost, browseHosts, DiscoveredHost } from './discovery';
 import { appBundlePath, canDragPermissions } from './mac-drag';
 import { resolveLocationSwitch } from './location-switch';
+import { shouldShowWindowOnLaunch } from './launch';
 
 interface MacPermissions {
   getAuthStatus(type: string): string;
@@ -200,7 +201,13 @@ function refreshAppMenu(): void {
 // macOS from flashing a window for this menu-bar app; it's ignored on Windows.
 function applyLaunchAtLogin(next: HushConfig): void {
   try {
-    app.setLoginItemSettings({ openAtLogin: next.launchAtLogin, openAsHidden: true });
+    // openAsHidden covers macOS; Windows ignores it, so we register a --hidden
+    // arg on the login-item launch and detect it in wasAutoLaunched().
+    app.setLoginItemSettings({
+      openAtLogin: next.launchAtLogin,
+      openAsHidden: true,
+      args: ['--hidden'],
+    });
   } catch { /* noop — login-item control is best-effort */ }
 }
 
@@ -321,6 +328,13 @@ function connectRemote(): void {
   if (cfg.role !== 'controller' || !cfg.remote.host) return;
   remote.connect(cfg.remote.host, cfg.remote.port, cfg.remote.pairingCode);
   pushStatus();
+}
+
+// Was this process started automatically at login (vs. the user opening it)?
+// Windows: the login item carries our --hidden arg. macOS: ask the OS directly.
+function wasAutoLaunched(): boolean {
+  if (process.argv.includes('--hidden')) return true;
+  try { return app.getLoginItemSettings().wasOpenedAtLogin; } catch { return false; }
 }
 
 function showWindow() {
@@ -534,8 +548,9 @@ if (!app.requestSingleInstanceLock()) {
       if (cfg.role === 'host') startHost();
     });
 
-    // First run: open the settings window so the user can set things up.
-    showWindow();
+    // Open the settings window on launch — unless we were auto-started at login
+    // and setup is already done, in which case stay quietly in the tray.
+    if (shouldShowWindowOnLaunch(wasAutoLaunched(), cfg)) showWindow();
 
     // ---- IPC ----
     ipcMain.handle('config:get', () => cfg);
