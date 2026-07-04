@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 const bridge = {
+  // Platform flag so the renderer can hide macOS-only UI (TCC permission panels
+  // and the onboarding permissions step) on Windows/Linux, where they're moot.
+  isMac: process.platform === 'darwin',
   getConfig: () => ipcRenderer.invoke('config:get'),
   saveConfig: (cfg: unknown) => ipcRenderer.invoke('config:set', cfg),
   getBrand: () => ipcRenderer.invoke('brand:get'),

@@ -7,6 +7,10 @@ export const PROTOCOL_VERSION = 1;
 export const DEFAULT_PORT = 8698;
 export const MDNS_SERVICE_TYPE = 'hush'; // advertised as _hush._tcp
 
+// Liveness cadence shared by both sides: ping this often, and treat a link that
+// misses a full interval's pong as dead.
+export const HEARTBEAT_MS = 5000;
+
 export type WireMessage =
   | { t: 'hello'; v: number; code: string }
   | { t: 'welcome'; v: number }

@@ -97,6 +97,72 @@ describe('Orchestrator forceRelease (watchdog)', () => {
   });
 });
 
+describe('Orchestrator auto mode (Wispr mirror)', () => {
+  // Fake clock + timer queue shared with the orchestrator's gesture recognizer.
+  function autoRig() {
+    let t = 0;
+    let id = 0;
+    const timers: { fn: () => void; at: number; id: number }[] = [];
+    const deps = {
+      now: () => t,
+      setTimer: (fn: () => void, ms: number) => {
+        const tid = ++id; timers.push({ fn, at: t + ms, id: tid });
+        return tid as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (tid: ReturnType<typeof setTimeout>) => {
+        const i = timers.findIndex((x) => x.id === (tid as unknown as number));
+        if (i >= 0) timers.splice(i, 1);
+      },
+    };
+    const advance = (ms: number) => {
+      t += ms;
+      for (const timer of [...timers]) if (timer.at <= t) { timers.splice(timers.indexOf(timer), 1); timer.fn(); }
+    };
+    const calls: string[] = [];
+    const cfg: HushConfig = {
+      shortcut: { mods: ['ctrl', 'alt', 'shift'], key: '' },
+      discordRpc: { clientId: '', clientSecret: '' },
+      mode: 'auto',
+      unmuteDelayMs: 0,
+    };
+    const o = new Orchestrator(new FakeMuter(calls), cfg, undefined, undefined, deps);
+    return { o, calls, advance };
+  }
+
+  it('HOLD mutes while held, unmutes on release (push-to-talk)', async () => {
+    const { o, calls, advance } = autoRig();
+    await o.onPress();
+    advance(1000);
+    await o.onRelease();
+    await o.whenIdle();
+    expect(calls).toEqual(['mute:true', 'mute:false']);
+  });
+
+  it('DOUBLE-TAP latches muted through release; a single TAP then stops', async () => {
+    const { o, calls, advance } = autoRig();
+    // double-tap
+    await o.onPress(); advance(60); await o.onRelease();
+    advance(120); await o.onPress(); advance(60); await o.onRelease();
+    advance(5000); // long time, key released — must stay muted
+    await o.whenIdle();
+    expect(calls).toEqual(['mute:true']);
+    // single tap stops
+    await o.onPress(); advance(60); await o.onRelease();
+    await o.whenIdle();
+    expect(calls).toEqual(['mute:true', 'mute:false']);
+  });
+
+  it('a lone TAP mutes briefly then unmutes (no latch)', async () => {
+    const { o, calls, advance } = autoRig();
+    await o.onPress(); advance(80); await o.onRelease();
+    await o.whenIdle();
+    expect(calls).toEqual(['mute:true']);
+    advance(350); // double-tap window passes with no second tap
+    await o.whenIdle();
+    expect(calls).toEqual(['mute:true', 'mute:false']);
+  });
+});
+
 describe('Orchestrator onActiveChange', () => {
   it('notifies on activate and deactivate', async () => {
     const calls: string[] = [];

@@ -12,10 +12,12 @@ const store = new Store<{ config: HushConfig }>({
 // yourself, so migrate `trigger` (the key the user physically pressed) into it.
 function migrate(raw: Record<string, unknown>): HushConfig {
   const shortcut = (raw.shortcut ?? raw.trigger ?? DEFAULT_CONFIG.shortcut) as Combo;
+  // 'handsfree' was the pre-release name for the auto mode.
+  const mode = raw.mode === 'handsfree' ? 'auto' : (raw.mode as HushConfig['mode']);
   return {
     shortcut,
     discordRpc: (raw.discordRpc as HushConfig['discordRpc']) ?? DEFAULT_CONFIG.discordRpc,
-    mode: (raw.mode as HushConfig['mode']) ?? DEFAULT_CONFIG.mode,
+    mode: mode ?? DEFAULT_CONFIG.mode,
     unmuteDelayMs: (raw.unmuteDelayMs as number) ?? DEFAULT_CONFIG.unmuteDelayMs,
     // New in the cross-machine build. Old configs predate these → default to
     // 'local', preserving the original single-machine behavior exactly.
@@ -34,9 +36,12 @@ export function loadConfig(): HushConfig {
     validateConfig(cfg);
     return cfg;
   } catch {
-    // Stored config is corrupt — fall back to defaults.
-    store.set('config', DEFAULT_CONFIG);
-    return DEFAULT_CONFIG;
+    // A field is invalid — reset to defaults but NEVER drop the Discord
+    // credentials/token, so an upgrade (or a bad shortcut) can't force the user
+    // to reconnect Discord and redo the whole setup.
+    const safe: HushConfig = { ...DEFAULT_CONFIG, discordRpc: cfg.discordRpc ?? DEFAULT_CONFIG.discordRpc };
+    store.set('config', safe);
+    return safe;
   }
 }
 

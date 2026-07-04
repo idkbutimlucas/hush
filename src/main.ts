@@ -1,4 +1,4 @@
-import { app, Tray, Menu, BrowserWindow, nativeImage, ipcMain, shell, systemPreferences, MenuItemConstructorOptions } from 'electron';
+import { app, Tray, Menu, BrowserWindow, nativeImage, ipcMain, shell, systemPreferences, powerMonitor, MenuItemConstructorOptions } from 'electron';
 import * as path from 'path';
 import * as os from 'os';
 import { uIOhook } from 'uiohook-napi';
@@ -122,6 +122,11 @@ function discordLocationMenuItems(): MenuItemConstructorOptions[] {
   ];
 }
 
+// Human label for the mute mode, including upstream's 'auto' (mirror Wispr).
+function modeLabel(mode: HushConfig['mode']): string {
+  return mode === 'auto' ? 'Auto' : mode === 'hold' ? 'Maintenir' : 'Bascule';
+}
+
 function refreshTrayMenu() {
   if (!tray) return;
   const status = !engineReady
@@ -134,7 +139,7 @@ function refreshTrayMenu() {
       { label: `${BRAND.name} — ${status}`, enabled: false },
       { type: 'separator' },
       { label: `Raccourci : ${comboLabel(cfg.shortcut)}`, enabled: false },
-      { label: `Mode : ${cfg.mode === 'hold' ? 'Maintenir' : 'Bascule'}`, enabled: false },
+      { label: `Mode : ${modeLabel(cfg.mode)}`, enabled: false },
       { label: `Discord : ${rpcLabel(discord.getState())}`, enabled: false },
       { type: 'separator' },
       { label: 'Emplacement de Discord', enabled: false },
@@ -517,6 +522,16 @@ if (!app.requestSingleInstanceLock()) {
     if (cfg.role === 'host') { void connectDiscord(); startHost(); }
     else if (cfg.role === 'controller') { connectRemote(); }
     else { void connectDiscord(); } // best-effort auto-connect from stored credentials
+
+    // A sleep can leave the LAN link half-open with no clean close, so proactively
+    // re-establish on wake instead of waiting on a heartbeat cycle. Both helpers
+    // are idempotent (connectRemote disconnects first and no-ops unless controller;
+    // startHost stops the old listener and re-advertises mDNS).
+    powerMonitor.on('resume', () => {
+      dbg('power: resume — re-establishing links');
+      connectRemote();
+      if (cfg.role === 'host') startHost();
+    });
 
     // First run: open the settings window so the user can set things up.
     showWindow();

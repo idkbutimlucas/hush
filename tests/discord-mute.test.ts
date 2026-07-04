@@ -68,7 +68,15 @@ class FakeRpcClient {
 
   async setVoiceSettings(settings: { mute?: boolean; deaf?: boolean }): Promise<unknown> {
     this.calls.push({ name: 'setVoiceSettings', args: [settings] });
+    this.voiceSettings = { ...this.voiceSettings, ...settings };
     return undefined;
+  }
+
+  voiceSettings: { mute?: boolean; deaf?: boolean } = { mute: false, deaf: false };
+
+  async getVoiceSettings(): Promise<{ mute?: boolean; deaf?: boolean }> {
+    this.calls.push({ name: 'getVoiceSettings', args: [] });
+    return this.voiceSettings;
   }
 
   async destroy(): Promise<void> {
@@ -437,5 +445,94 @@ describe('DiscordRpcMuter drop watchdog', () => {
 
     expect(onDrop).toHaveBeenCalledTimes(1);
     expect(m.getState()).toBe('disconnected');
+  });
+});
+
+describe('DiscordRpcMuter restores prior voice state (snapshot/restore)', () => {
+  // A connected muter whose fake Discord starts in the given voice state.
+  // `reconnect(nextVoice)` dials a fresh client seeded with nextVoice and returns
+  // it — used to simulate the user changing their Discord state while Hush was
+  // disconnected. `client` is the first client (valid until a reconnect).
+  async function connectedMuter(voice: { mute?: boolean; deaf?: boolean }) {
+    let current = voice;
+    let client: FakeRpcClient | null = null;
+    const m = new DiscordRpcMuter({
+      createClient: () => {
+        client = new FakeRpcClient();
+        client.voiceSettings = { ...current };
+        return client as any;
+      },
+      oauth: makeFakeOauth({ isExpired: vi.fn(() => false) }) as any,
+      fetchImpl: (async () => { throw new Error('fetchImpl should not be called'); }) as any,
+      now: () => 1000,
+    });
+    const connect = () => m.connect('cid', 'secret', { accessToken: 'tok', tokenExpiresAt: 999999 });
+    await connect();
+    const reconnect = async (nextVoice: { mute?: boolean; deaf?: boolean }) => {
+      current = nextVoice;
+      await connect();
+      return client!;
+    };
+    return { m, client: client!, reconnect };
+  }
+
+  const sets = (client: FakeRpcClient) =>
+    client.calls.filter((c) => c.name === 'setVoiceSettings').map((c) => c.args[0]);
+
+  it('classic: not muted before -> mute on hold, unmute on release', async () => {
+    const { m, client } = await connectedMuter({ mute: false, deaf: false });
+    await m.setMute(true);
+    await m.setMute(false);
+    expect(sets(client)).toEqual([{ mute: true }, { mute: false, deaf: false }]);
+  });
+
+  it('stays muted on release if already self-muted before', async () => {
+    const { m, client } = await connectedMuter({ mute: true, deaf: false });
+    await m.setMute(true);
+    await m.setMute(false);
+    expect(sets(client)).toEqual([{ mute: true }, { mute: true, deaf: false }]);
+  });
+
+  it('stays deafened on release if deafened before (deaf preserved, never asserted during hold)', async () => {
+    const { m, client } = await connectedMuter({ mute: true, deaf: true });
+    await m.setMute(true);
+    await m.setMute(false);
+    // hold asserts only { mute: true } (no deaf field); release restores both.
+    expect(sets(client)).toEqual([{ mute: true }, { mute: true, deaf: true }]);
+  });
+
+  it('snapshots only once across a double setMute(true) (idempotent hold)', async () => {
+    const { m, client } = await connectedMuter({ mute: false, deaf: false });
+    await m.setMute(true);
+    await m.setMute(true);
+    const snapshots = client.calls.filter((c) => c.name === 'getVoiceSettings');
+    expect(snapshots.length).toBe(1);
+  });
+
+  it('falls back to a plain unmute when the snapshot could not be read', async () => {
+    const { m, client } = await connectedMuter({ mute: false, deaf: false });
+    client.getVoiceSettings = (async () => { throw new Error('rpc query failed'); }) as any;
+    await m.setMute(true);
+    await m.setMute(false);
+    expect(sets(client)).toEqual([{ mute: true }, { mute: false }]);
+  });
+
+  it('re-snapshots after a mid-hold RPC drop instead of restoring stale state', async () => {
+    const { m, client, reconnect } = await connectedMuter({ mute: false, deaf: false });
+    await m.setMute(true);                              // snapshot { mute:false, deaf:false }
+    client.fireDisconnected();                          // RPC drops mid-hold
+    const client2 = await reconnect({ mute: true, deaf: true }); // user self-deafens while Hush is down
+    await m.setMute(true);                              // must RE-snapshot the current { mute:true, deaf:true }
+    await m.setMute(false);                             // restore -> must be current, not stale
+    expect(sets(client2).pop()).toEqual({ mute: true, deaf: true });
+  });
+
+  it('does a plain unmute on release after a mid-hold drop cleared the hold (never stuck muted)', async () => {
+    const { m, client, reconnect } = await connectedMuter({ mute: false, deaf: false });
+    await m.setMute(true);                              // Hush mutes; heldByHush = true
+    client.fireDisconnected();                          // RPC drops mid-hold -> handleDrop clears the hold
+    const client2 = await reconnect({ mute: false, deaf: false }); // reconnect (fresh client)
+    await m.setMute(false);                             // release WITHOUT an intervening re-mute
+    expect(sets(client2)).toEqual([{ mute: false }]);   // plain unmute, not a no-op / not stuck
   });
 });

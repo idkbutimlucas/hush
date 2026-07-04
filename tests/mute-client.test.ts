@@ -25,12 +25,15 @@ function connected() {
   const sockets: FakeClientSocket[] = [];
   const factory = () => { const s = new FakeClientSocket(); sockets.push(s); return s; };
   const scheduled: Array<() => void> = [];
-  const muter = new RemoteDiscordMuter(factory, (fn) => { scheduled.push(fn); });
+  const ticks: Array<() => void> = [];
+  let hbCancels = 0;
+  const heartbeat = (tick: () => void) => { ticks.push(tick); return () => { hbCancels += 1; }; };
+  const muter = new RemoteDiscordMuter(factory, (fn) => { scheduled.push(fn); }, heartbeat);
   muter.connect('192.168.1.20', 8698, 'ABC123');
   const s = sockets[0];
   s.fireOpen();                                   // controller sends hello
   s.fireMessage(encode({ t: 'welcome', v: PROTOCOL_VERSION }));
-  return { muter, sockets, scheduled, factory };
+  return { muter, sockets, scheduled, ticks, factory, heartbeatCancels: () => hbCancels };
 }
 
 describe('RemoteDiscordMuter', () => {
@@ -123,5 +126,55 @@ describe('RemoteDiscordMuter', () => {
 
     await muter.setMute(true);
     expect(sockets[1].lastMsg()).toEqual({ t: 'mute', on: true });
+  });
+
+  it('pings the host on a heartbeat tick once connected', () => {
+    const { sockets, ticks } = connected();
+    ticks[ticks.length - 1]();
+    expect(sockets[0].lastMsg()).toEqual({ t: 'ping' });
+  });
+
+  it('stays connected across ticks while pong keeps arriving', () => {
+    const { muter, sockets, ticks } = connected();
+    const tick = ticks[ticks.length - 1];
+    tick();                                          // ping #1
+    sockets[0].fireMessage(encode({ t: 'pong' }));   // host is alive
+    tick();                                          // ping #2, no close
+    expect(sockets[0].closed).toBe(false);
+    expect(muter.isConnected()).toBe(true);
+    const pings = sockets[0].sent.map((r) => decode(r)).filter((m) => m.t === 'ping');
+    expect(pings.length).toBe(2);
+  });
+
+  it('closes the socket and reconnects when a pong is missed', () => {
+    const { sockets, scheduled, ticks } = connected();
+    const tick = ticks[ticks.length - 1];
+    tick();                                          // ping, now awaiting pong
+    tick();                                          // no pong arrived -> dead link
+    expect(sockets[0].closed).toBe(true);
+    expect(scheduled.length).toBe(1);                // onClose scheduled a reconnect
+    scheduled[0]();                                  // run it
+    expect(sockets.length).toBe(2);                  // a fresh socket dialed out
+  });
+
+  it('a stale scheduled reconnect does not orphan a freshly connected socket', () => {
+    const { muter, sockets, scheduled, ticks } = connected();
+    const tick = ticks[ticks.length - 1];
+    tick();                                   // ping, awaiting pong
+    tick();                                   // missed pong -> close -> reconnect scheduled
+    expect(scheduled.length).toBe(1);
+    muter.connect('192.168.1.20', 8698, 'ABC123');  // simulate resume: fresh dial
+    const afterFreshConnect = sockets.length;        // new socket created by connect()
+    scheduled[0]();                                   // stale scheduled reconnect fires
+    expect(sockets.length).toBe(afterFreshConnect);   // no extra (orphan) socket
+  });
+
+  it('cancels the heartbeat on disconnect and ignores a stale tick', () => {
+    const { muter, sockets, ticks, heartbeatCancels } = connected();
+    muter.disconnect();
+    expect(heartbeatCancels()).toBe(1);
+    const before = sockets[0].sent.length;
+    ticks[ticks.length - 1]();                       // stale tick -> no-op
+    expect(sockets[0].sent.length).toBe(before);
   });
 });

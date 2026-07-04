@@ -1,5 +1,5 @@
 cask "hush" do
-  version "0.1.2"
+  version "0.1.4"
   sha256 :no_check # updated to the real DMG shasum in the published tap after each release
 
   url "https://github.com/MatthysDev/hush/releases/download/v#{version}/Hush-arm64.dmg"

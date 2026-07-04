@@ -40,6 +40,14 @@ jobs:
       - name: Run tests
         run: npm test
 
+      # electron-builder stamps the app version from package.json, NOT the git
+      # tag — so a tag pushed without a matching package.json bump ships a
+      # mislabeled build (e.g. tag v0.1.6 producing a 0.1.2 app). Derive the
+      # version from the tag here so the built artifact always matches the tag.
+      - name: Stamp version from tag
+        shell: bash
+        run: npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version
+
       - name: Build installer (unsigned)
         run: ${{ matrix.build }}
         env:

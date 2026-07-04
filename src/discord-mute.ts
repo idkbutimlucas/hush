@@ -85,6 +85,11 @@ export class DiscordRpcMuter implements DiscordMuter {
   // (overlapping connect() calls, or a socket drop mid-handshake) recognize
   // it's stale and bail out without clobbering a newer attempt's state.
   private generation = 0;
+  // Snapshot/restore of the user's own voice state so a hold/release returns them
+  // to exactly what they had before Hush muted — covering self-mute AND deafen.
+  // heldByHush gates the snapshot to the entering edge (idempotent under repeats).
+  private heldByHush = false;
+  private priorState: { mute: boolean; deaf: boolean } | null = null;
 
   constructor(deps: Partial<Deps> = {}) {
     this.deps = {
@@ -143,6 +148,7 @@ export class DiscordRpcMuter implements DiscordMuter {
     if (this.closing) return;
     this.state = 'disconnected';
     this.client = null;
+    this.clearHold();
     dbg('rpc: disconnected (drop)');
     this.onDrop?.();
   }
@@ -265,17 +271,64 @@ export class DiscordRpcMuter implements DiscordMuter {
     }
   }
 
+  // The user's current { mute, deaf } self-state, or null if we can't tell
+  // (not connected / query unsupported / failed). Never throws.
+  private async readVoiceState(): Promise<{ mute: boolean; deaf: boolean } | null> {
+    if (!this.client || this.state !== 'connected' || !this.client.getVoiceSettings) return null;
+    try {
+      const s = await this.client.getVoiceSettings();
+      return { mute: s.mute === true, deaf: s.deaf === true };
+    } catch (err) {
+      dbg('rpc: readVoiceState failed', err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
+  // Forget any outstanding hold snapshot. Called on every teardown/release so a
+  // later hold re-snapshots the current state instead of restoring a stale one.
+  private clearHold(): void {
+    this.heldByHush = false;
+    this.priorState = null;
+  }
+
+  // Mute for dictation, remembering the user's prior voice state so release can
+  // restore it. On the entering edge we snapshot { mute, deaf } and assert only
+  // mute:true (deaf is left untouched during the hold). On release we restore the
+  // exact snapshot — so someone already muted or deafened is left that way. A
+  // failed snapshot degrades to a plain unmute (best-effort, never worse).
   async setMute(on: boolean): Promise<void> {
     if (!this.client || this.state !== 'connected') {
       dbg('rpc: setMute skipped (not connected)', { on });
       return;
     }
     try {
-      await this.client.setVoiceSettings({ mute: on });
-      dbg('rpc: setMute', { on });
+      if (on) {
+        if (!this.heldByHush) {
+          this.priorState = await this.readVoiceState();
+          this.heldByHush = true;
+        }
+        await this.client.setVoiceSettings({ mute: true });
+        dbg('rpc: setMute', { on: true });
+      } else {
+        // Release. Restore the snapshot taken on the entering edge. If we have
+        // none — never held, or the hold was lost to a mid-session RPC drop that
+        // cleared it — fall back to a plain unmute: every caller only asks to
+        // unmute when it believes a mute is outstanding, so honoring it never
+        // leaves Discord stuck muted. Restore sends both flags; the fallback
+        // leaves deaf untouched.
+        const prior = this.priorState;
+        this.clearHold();
+        if (prior) {
+          await this.client.setVoiceSettings({ mute: prior.mute, deaf: prior.deaf });
+          dbg('rpc: restore prior voice state', prior);
+        } else {
+          await this.client.setVoiceSettings({ mute: false });
+          dbg('rpc: setMute', { on: false });
+        }
+      }
     } catch (err) {
       // A dropped socket (Discord quit mid-session) lands here — degrade to
-      // disconnected so the next launch/attempt reconnects instead of throwing.
+      // disconnected so the next attempt reconnects instead of throwing.
       this.state = 'disconnected';
       this.lastError = err instanceof Error ? err.message : String(err);
       dbg('rpc: setMute failed', this.lastError);
@@ -289,5 +342,6 @@ export class DiscordRpcMuter implements DiscordMuter {
     }
     this.client = null;
     if (this.state === 'connected') this.state = 'disconnected';
+    this.clearHold();
   }
 }

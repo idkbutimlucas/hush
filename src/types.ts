@@ -1,6 +1,11 @@
 export type Mod = 'ctrl' | 'alt' | 'cmd' | 'shift';
 export type Combo = { mods: Mod[]; key: string };
-export type Mode = 'hold' | 'toggle';
+// auto: detects the gesture automatically, mirroring Wispr — HOLD = push-to-talk
+//   (muted while held); DOUBLE-TAP starts and latches (stays muted after you let
+//   go); a single TAP then stops. This is the do-everything default.
+// hold: only push-to-talk (muted strictly while held).
+// toggle: press flips mute on/off.
+export type Mode = 'auto' | 'hold' | 'toggle';
 
 export interface InputEngine {
   start(): void;

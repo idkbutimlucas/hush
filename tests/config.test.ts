@@ -6,8 +6,8 @@ describe('getConfig', () => {
     const cfg = getConfig();
     expect(cfg.shortcut.mods.length > 0 || cfg.shortcut.key).toBeTruthy();
   });
-  it('defaults to hold mode with no unmute delay and empty RPC credentials', () => {
-    expect(DEFAULT_CONFIG.mode).toBe('hold');
+  it('defaults to auto mode with no unmute delay and empty RPC credentials', () => {
+    expect(DEFAULT_CONFIG.mode).toBe('auto');
     expect(DEFAULT_CONFIG.unmuteDelayMs).toBe(0);
     expect(DEFAULT_CONFIG.discordRpc).toEqual({ clientId: '', clientSecret: '' });
   });

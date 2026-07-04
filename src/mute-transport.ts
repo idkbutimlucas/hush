@@ -1,8 +1,6 @@
 import WebSocket, { WebSocketServer } from 'ws';
-import { ClientSocket, ClientSocketFactory, DuplexSocket, ServerListener } from './mute-protocol';
+import { ClientSocket, ClientSocketFactory, DuplexSocket, ServerListener, HEARTBEAT_MS } from './mute-protocol';
 import { dbg } from './debug';
-
-const HEARTBEAT_MS = 5000; // ping every 5s; terminate a socket that misses a pong
 
 // ---- Controller side: dial out to a host --------------------------------
 export const wsClientFactory: ClientSocketFactory = (host, port): ClientSocket => {
