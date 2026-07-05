@@ -1,6 +1,6 @@
 {
   "name": "hush",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Push-to-talk bridge: mute Discord while you dictate with Wispr Flow",
   "author": "Matthys Ducrocq",
   "license": "MIT",
